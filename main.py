@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """CLI runner: choose to start encryption or decryption service."""
 import argparse
 from logging_system import logger

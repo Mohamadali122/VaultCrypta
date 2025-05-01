@@ -1,4 +1,5 @@
-# key_rotation.py
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 import os
 import base64
