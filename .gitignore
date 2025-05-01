@@ -1,0 +1,23 @@
+# Bytecode and cache
+__pycache__/
+
+*.pyo
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Environment config
+.env
+*.key
+
+# Logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Output folders
+/input/
+/output/
