@@ -12,6 +12,7 @@ This project provides a secure system for encrypting and decrypting files using 
 - ✅ Logs activity and errors for auditing
 - ✅ Real-time file monitoring using `watchdog`
 - ✅ CLI interface to select encryption or decryption mode
+- ✅ **Efficient chunked I/O for large files** (processes files in blocks, not all at once)
 
 ---
 
@@ -62,6 +63,16 @@ This uses a command-line interface with subcommands for flexibility.
 
 ---
 
+## ⚡ Performance & Large File Support
+
+**VaultCrypta now processes files in memory-efficient blocks (default: 64KB) instead of loading entire files at once.**
+
+- **Chunked I/O:** Both encryption and decryption stream data through compression and encryption/decompression and decryption, minimizing memory usage.
+- **Handles very large files:** Suitable for files much larger than available RAM.
+- **Fast and scalable:** Performance is improved for all file sizes, especially large ones.
+
+---
+
 ## 🧪 Testing
 
 1. Place a sample `.csv`, `.json`, or `.txt` file in the `watch_directory`.
@@ -101,7 +112,7 @@ This uses a command-line interface with subcommands for flexibility.
 
 ## ✅ Recommendations
 
--  Rotate the AES key periodically using key_rotation.py, KEEP A COPY OF YOUR KEY to be apply to decrypt your old files.
+-  Rotate the AES key periodically using key_rotation.py, KEEP A COPY OF YOUR KEY to be able to decrypt your old files.
 -  Use `watchdog` for real-time directory monitoring.
 
 ---
