@@ -20,15 +20,6 @@ def decrypt_and_decompress_file(enc_path: str, encryption_key_b64: str, output_d
         return
 
     try:
-        data = path.read_bytes()
-    except Exception as e:
-        logger.error(f"Failed to read encrypted file '{enc_path}': {e}")
-        return
-
-    iv = data[:AES_BLOCK_SIZE_BYTES]
-    ciphertext = data[AES_BLOCK_SIZE_BYTES:]
-
-    try:
         key = base64.b64decode(encryption_key_b64)
     except Exception as e:
         logger.error(f"Invalid base64 encryption key: {e}")
@@ -37,46 +28,49 @@ def decrypt_and_decompress_file(enc_path: str, encryption_key_b64: str, output_d
         logger.error(f"Invalid AES key length: {len(key)} bytes. Expected 16, 24, or 32.")
         return
 
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    try:
-        padded = decryptor.update(ciphertext) + decryptor.finalize()
-    except Exception as e:
-        logger.error(f"Decryption failed for '{enc_path}': {e}")
-        return
-
-    if not padded:
-        logger.error(f"Decrypted data is empty for '{enc_path}'")
-        return
-
-    pad_len = padded[-1]
-    decrypted = padded[:-pad_len]
-
-    # Extract original filename
-    sep_index = decrypted.find(b'\0')
-    if sep_index == -1:
-        logger.error(f"No filename found in decrypted payload for '{enc_path}'")
-        return
-
-    filename_bytes = decrypted[:sep_index]
-    original_name = filename_bytes.decode('utf-8')
-    payload = decrypted[sep_index + 1:]
+    block_size = 64 * 1024  # 64KB
 
     try:
-        decompressed = gzip.decompress(payload)
+        with open(enc_path, 'rb') as fin:
+            iv = fin.read(AES_BLOCK_SIZE_BYTES)
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+            decryptor = cipher.decryptor()
+            # Read and decrypt in chunks
+            decrypted_data = b''
+            while True:
+                chunk = fin.read(block_size)
+                if not chunk:
+                    break
+                decrypted_data += decryptor.update(chunk)
+            decrypted_data += decryptor.finalize()
+            if not decrypted_data:
+                logger.error(f"Decrypted data is empty for '{enc_path}'")
+                return
+            pad_len = decrypted_data[-1]
+            decrypted = decrypted_data[:-pad_len]
+            # Extract original filename
+            sep_index = decrypted.find(b'\0')
+            if sep_index == -1:
+                logger.error(f"No filename found in decrypted payload for '{enc_path}'")
+                return
+            filename_bytes = decrypted[:sep_index]
+            original_name = filename_bytes.decode('utf-8')
+            payload = decrypted[sep_index + 1:]
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            out_file = output_path / original_name
+            # Decompress in chunks
+            import io
+            with open(out_file, 'wb') as fout:
+                with gzip.GzipFile(fileobj=io.BytesIO(payload), mode='rb') as gzipped:
+                    while True:
+                        chunk = gzipped.read(block_size)
+                        if not chunk:
+                            break
+                        fout.write(chunk)
+            logger.info(f"Decrypted and decompressed '{enc_path}' → '{out_file}'")
     except Exception as e:
-        logger.error(f"Decompression failed for '{enc_path}': {e}")
-        return
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    out_file = output_path / original_name
-
-    try:
-        out_file.write_bytes(decompressed)
-        logger.info(f"Decrypted and decompressed '{enc_path}' → '{out_file}'")
-    except Exception as e:
-        logger.error(f"Failed to write output file '{out_file}': {e}")
+        logger.error(f"Failed to decrypt/decompress '{enc_path}': {e}")
 
 def decryption_service() -> None:
     config: Dict[str, Any] = load_environment()

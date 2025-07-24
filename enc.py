@@ -26,15 +26,6 @@ def encrypt_and_compress_file(filepath: str, encryption_key_b64: str, staging_di
         return
 
     try:
-        plaintext = path.read_bytes()
-    except Exception as e:
-        logger.error(f"Failed to read file '{filepath}': {e}")
-        return
-
-    compressed = gzip.compress(plaintext)
-    logger.info(f"Compressed '{filepath}' ({len(plaintext)}→{len(compressed)} bytes)")
-
-    try:
         key = base64.b64decode(encryption_key_b64)
     except Exception as e:
         logger.error(f"Invalid base64 encryption key: {e}")
@@ -47,18 +38,8 @@ def encrypt_and_compress_file(filepath: str, encryption_key_b64: str, staging_di
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
     encryptor = cipher.encryptor()
 
-    # Include original filename in payload
     filename_bytes = path.name.encode('utf-8') + b'\0'
-    payload = filename_bytes + compressed
-
-    pad_len = AES_BLOCK_SIZE_BYTES - (len(payload) % AES_BLOCK_SIZE_BYTES)
-    padded = payload + bytes([pad_len] * pad_len)
-
-    try:
-        ciphertext = encryptor.update(padded) + encryptor.finalize()
-    except Exception as e:
-        logger.error(f"Encryption failed for '{filepath}': {e}")
-        return
+    block_size = 64 * 1024  # 64KB
 
     timestamp = time.strftime("%Y%m%d-%H%M%S-")
     device = get_device_name()
@@ -70,10 +51,58 @@ def encrypt_and_compress_file(filepath: str, encryption_key_b64: str, staging_di
     out_path = staging_path / out_name
 
     try:
-        out_path.write_bytes(iv + ciphertext)
+        with open(filepath, 'rb') as fin, open(out_path, 'wb') as fout:
+            # Write IV first
+            fout.write(iv)
+
+            # Prepare a pipe: compress -> encrypt -> write
+            # We need to prepend the filename header to the compressed stream
+            # We'll use a BytesIO buffer for the header, then stream the rest
+            import io
+            header = filename_bytes
+            # Use a pipe: gzip compresses from fin, prepend header, encrypt in blocks
+            class HeaderThenFile(io.RawIOBase):
+                def __init__(self, header, fileobj):
+                    self.header = header
+                    self.fileobj = fileobj
+                    self.header_sent = False
+                def read(self, size=-1):
+                    if not self.header_sent:
+                        self.header_sent = True
+                        if size == -1:
+                            return self.header + self.fileobj.read()
+                        else:
+                            h = self.header[:size]
+                            rest = self.header[size:]
+                            if rest:
+                                self.header = rest
+                                return h
+                            else:
+                                self.header = b''
+                                return h or self.fileobj.read(size - len(h))
+                    else:
+                        return self.fileobj.read(size)
+            header_file = HeaderThenFile(header, fin)
+            with gzip.GzipFile(fileobj=header_file, mode='rb') as gzipped:
+                # We need to compress the file and encrypt in blocks
+                # But gzip.GzipFile does not support reading from a file-like and writing to another file-like directly
+                # So we use a buffer
+                buffer = b''
+                while True:
+                    chunk = gzipped.read(block_size)
+                    if not chunk:
+                        break
+                    buffer += chunk
+                # Now buffer contains the header+compressed data
+                # Pad for AES block size
+                pad_len = AES_BLOCK_SIZE_BYTES - (len(buffer) % AES_BLOCK_SIZE_BYTES)
+                padded = buffer + bytes([pad_len] * pad_len)
+                # Encrypt in blocks
+                encrypted = encryptor.update(padded) + encryptor.finalize()
+                fout.write(encrypted)
         logger.info(f"Encrypted and saved: '{out_path}'")
     except Exception as e:
-        logger.error(f"Failed to write encrypted file '{out_path}': {e}")
+        logger.error(f"Failed to encrypt/write file '{filepath}' to '{out_path}': {e}")
 
 def encryption_service() -> None:
     config: Dict[str, Any] = load_environment()
